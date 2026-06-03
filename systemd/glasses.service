@@ -1,0 +1,20 @@
+[Unit]
+Description=Blind Glasses Face Recognition System
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/blind-glasses
+ExecStart=/usr/bin/python3 /home/pi/blind-glasses/main.py
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+# Allow GPIO, SPI, I2C, audio, and serial access
+SupplementaryGroups=gpio spi i2c audio dialout
+
+[Install]
+WantedBy=multi-user.target

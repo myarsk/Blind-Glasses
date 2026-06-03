@@ -1,0 +1,10 @@
+face_recognition
+opencv-python-headless
+pyttsx3
+python-telegram-bot==20.*
+picamera2
+pynmea2
+pyserial
+spidev
+adafruit-circuitpython-ads1x15
+numpy
