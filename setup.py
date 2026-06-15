@@ -116,6 +116,7 @@ def setup_switches(cfg: Config) -> None:
 def setup_gps(cfg: Config) -> None:
     print("\n=== GPS (NEO-6M) ===")
     print("Wiring: VCC=3.3V  GND  TX→GPIO15(RX)  RX→GPIO14(TX)")
+    print("Note: /dev/serial0 is a symlink to the active UART — preferred over ttyAMA0 directly.")
     cfg.gps_serial_port = _ask("Serial port", cfg.gps_serial_port)
     cfg.gps_baud = _ask_int("Baud rate", cfg.gps_baud)
 
