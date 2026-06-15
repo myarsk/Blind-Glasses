@@ -1,5 +1,5 @@
 """
-Voice-driven vision agent.
+Voice-driven vision agent — bilingual (English / Arabic).
 
 Activated by long press on the camera switch. Maintains a chat context for
 the whole session so follow-up questions work naturally.
@@ -7,7 +7,7 @@ the whole session so follow-up questions work naturally.
 Flow:
   long press → "Agent mode on. Ask me anything."
   user speaks → speech-to-text → frame captured → Gemini 2.5 Flash Lite → TTS
-  say "exit / stop / bye" to leave agent mode
+  say "exit / stop / bye" (EN) or "اخرج / وقف / انتهى" (AR) to leave agent mode
 
 Dependencies:
   pip install openai speechrecognition pyaudio
@@ -20,28 +20,72 @@ from typing import Callable
 import cv2
 import numpy as np
 
-_SYSTEM_PROMPT = (
+from config import Config
+
+# ── System prompts ─────────────────────────────────────────────────────────────
+
+_SYSTEM_PROMPT_EN = (
     "You are an AI assistant built into the smart glasses of a visually impaired person. "
     "You can see through their camera in real time. "
     "Keep every response short and spoken-friendly — no bullet points, no markdown, no lists. "
     "Prioritise safety: mention traffic, obstacles, and hazards first. "
     "When asked about crossing a road, describe traffic direction, speed, and gaps clearly. "
-    "When asked who is there, describe people and their approximate distance."
+    "When asked who is there, describe people and their approximate distance. "
+    "Always respond in English."
 )
 
-_EXIT_WORDS = {"exit", "stop", "bye", "quit", "goodbye", "end", "cancel"}
+_SYSTEM_PROMPT_AR = (
+    "أنت مساعد ذكاء اصطناعي مدمج في النظارات الذكية لشخص ضعيف البصر. "
+    "يمكنك رؤية المحيط عبر كاميرا النظارات في الوقت الفعلي. "
+    "اجعل كل إجابة قصيرة ومناسبة للاستماع — بدون تعداد نقاط، بدون تنسيق، بدون قوائم. "
+    "أعطِ الأولوية للسلامة: اذكر حركة المرور والعقبات والمخاطر أولاً. "
+    "عند السؤال عن عبور الطريق، صِف اتجاه حركة المرور وسرعتها والفجوات بوضوح. "
+    "عند السؤال عمّن هو موجود، صِف الأشخاص ومسافتهم التقريبية. "
+    "تحدث دائماً باللغة العربية."
+)
+
+# ── Exit words ─────────────────────────────────────────────────────────────────
+
+_EXIT_WORDS_EN = {"exit", "stop", "bye", "quit", "goodbye", "end", "cancel"}
+_EXIT_WORDS_AR = {"اخرج", "وقف", "انتهى", "إلغاء", "باي", "انتهي", "إيقاف"}
+
+# ── Agent start/stop phrases ───────────────────────────────────────────────────
+
+_PHRASES = {
+    "en": {
+        "agent_on": "Agent mode on. I can see through your camera. Ask me anything.",
+        "agent_off": "Agent mode off.",
+        "no_mic": "No microphone available. Agent mode off.",
+        "no_catch": "I didn't catch that. Please repeat.",
+        "error": "Something went wrong. Please try again.",
+    },
+    "ar": {
+        "agent_on": "وضع المساعد مفعّل. يمكنني رؤية ما حولك. اسألني أي شيء.",
+        "agent_off": "تم إيقاف وضع المساعد.",
+        "no_mic": "لا يوجد ميكروفون متاح. تم إيقاف وضع المساعد.",
+        "no_catch": "لم أفهم ذلك. يرجى التكرار.",
+        "error": "حدث خطأ ما. يرجى المحاولة مرة أخرى.",
+    },
+}
+
 _MODEL = "google/gemini-2.5-flash-lite-preview-06-17"
+
+# STT language codes for Google Speech Recognition
+_STT_LANG = {
+    "en": "en-US",
+    "ar": "ar-SA",
+}
 
 
 class VisionAgent:
     def __init__(
         self,
-        api_key: str,
-        api_base_url: str,
+        cfg: Config,
         capture_fn: Callable[[], np.ndarray],
         speak_fn: Callable[[str], None],
         relay_fn: Callable[[str], None] = None,
     ):
+        self._cfg = cfg
         self._speak = speak_fn
         self._capture = capture_fn
         self._relay = relay_fn   # optional: mirror the conversation to Telegram
@@ -49,7 +93,30 @@ class VisionAgent:
         self._messages: list = []
 
         from openai import OpenAI
-        self._client = OpenAI(base_url=api_base_url.rstrip("/") + "/", api_key=api_key)
+        self._client = OpenAI(
+            base_url=cfg.api_base_url.rstrip("/") + "/",
+            api_key=cfg.lightning_api_key,
+        )
+
+    # ── Language helpers ──────────────────────────────────────────────────────
+
+    def _lang(self) -> str:
+        return getattr(self._cfg, "language", "en")
+
+    def _phrase(self, key: str) -> str:
+        lang = self._lang()
+        return _PHRASES.get(lang, _PHRASES["en"])[key]
+
+    def _system_prompt(self) -> str:
+        return _SYSTEM_PROMPT_AR if self._lang() == "ar" else _SYSTEM_PROMPT_EN
+
+    def _exit_words(self) -> set:
+        return _EXIT_WORDS_AR if self._lang() == "ar" else _EXIT_WORDS_EN
+
+    def _stt_lang(self) -> str:
+        return _STT_LANG.get(self._lang(), "en-US")
+
+    # ── Public API ────────────────────────────────────────────────────────────
 
     @property
     def is_active(self) -> bool:
@@ -72,8 +139,8 @@ class VisionAgent:
     def stop(self) -> None:
         if self._active:
             self._active = False
-            self._speak("Agent mode off.")
-            self._relay_text("🛑 Agent mode off.")
+            self._speak(self._phrase("agent_off"))
+            self._relay_text("🛑 " + self._phrase("agent_off"))
             print("[Agent] Stopped")
 
     def _relay_text(self, text: str) -> None:
@@ -90,38 +157,37 @@ class VisionAgent:
     def _run(self) -> None:
         import speech_recognition as sr
 
-        self._speak("Agent mode on. I can see through your camera. Ask me anything.")
-        self._relay_text("🎤 Agent mode on — listening.")
+        self._speak(self._phrase("agent_on"))
+        self._relay_text("🎤 " + self._phrase("agent_on"))
 
         recognizer = sr.Recognizer()
 
-        # Mic setup can fail if no input device is available (no mic plugged in,
-        # or running under sudo without access to the user's audio session).
-        # Fail cleanly instead of crashing the thread with _active stuck True.
         try:
             mic = sr.Microphone()
             with mic as source:
                 recognizer.adjust_for_ambient_noise(source, duration=0.5)
         except Exception as e:
             print(f"[Agent] Microphone unavailable: {e}")
-            self._speak("No microphone available. Agent mode off.")
+            self._speak(self._phrase("no_mic"))
             self._relay_text(f"⚠️ Agent could not start: microphone unavailable ({e})")
             self._active = False
             return
+
+        stt_lang = self._stt_lang()
 
         while self._active:
             try:
                 with mic as source:
                     audio = recognizer.listen(source, timeout=10, phrase_time_limit=12)
 
-                text = recognizer.recognize_google(audio).strip()
+                text = recognizer.recognize_google(audio, language=stt_lang).strip()
                 print(f"[Agent] Heard: {text}")
                 self._relay_text(f"🗣️ {text}")
 
-                if text.lower() in _EXIT_WORDS:
+                if text.lower() in self._exit_words() or text in self._exit_words():
                     self._active = False
-                    self._speak("Agent mode off.")
-                    self._relay_text("🛑 Agent mode off.")
+                    self._speak(self._phrase("agent_off"))
+                    self._relay_text("🛑 " + self._phrase("agent_off"))
                     break
 
                 response = self._query(text)
@@ -130,14 +196,13 @@ class VisionAgent:
                 self._speak(response)
 
             except sr.WaitTimeoutError:
-                # No speech detected — keep waiting silently
                 continue
             except sr.UnknownValueError:
-                self._speak("I didn't catch that. Please repeat.")
+                self._speak(self._phrase("no_catch"))
             except Exception as e:
                 print(f"[Agent] Error: {e}")
                 self._relay_text(f"⚠️ Agent error: {e}")
-                self._speak("Something went wrong. Please try again.")
+                self._speak(self._phrase("error"))
 
     # ── AI query ───────────────────────────────────────────────────────────────
 
@@ -160,7 +225,7 @@ class VisionAgent:
         completion = self._client.chat.completions.create(
             model=_MODEL,
             messages=[
-                {"role": "system", "content": _SYSTEM_PROMPT},
+                {"role": "system", "content": self._system_prompt()},
                 *self._messages,
             ],
         )

@@ -7,10 +7,16 @@ Hardware behaviour:
   VL53L0X (auto)      : proximity trigger → face recognition
                         known person  → voice announces name
                         unknown person → silent
-  Camera switch short : capture image → send via Telegram
+  Camera switch short : capture image → send via Telegram (broadcast)
   Camera switch long  : toggle agent mode (vision AI conversation)
-  GPS switch short    : send GPS location via Telegram
+  GPS switch short    : send GPS location via Telegram (broadcast)
   GPS switch long     : send GPS location + capture image via Telegram
+
+First run:
+  No config.json exists yet (or owner_chat_id == 0).
+  Start the system, then open Telegram and send /start to the bot.
+  The first person who does this becomes the permanent owner.
+  All subsequent configuration is done entirely through the Telegram bot.
 """
 
 import os
@@ -22,6 +28,7 @@ import cv2
 import numpy as np
 
 import config as cfg_module
+from config import Config
 from database import FaceDatabase
 from distance_sensor import DistanceSensor
 from face_recognizer import FaceRecognizer
@@ -45,16 +52,12 @@ def _init_camera(camera_index: int):
         time.sleep(0.5)
         return cam, "picamera2"
     except Exception as e:
-        # Surface why picamera2 was unavailable — on a Pi this is usually a venv
-        # created without --system-site-packages, so libcamera isn't importable.
-        # OpenCV can open a CSI camera device but often can't read frames from it.
         print(f"[Camera] picamera2 unavailable ({e}) — falling back to OpenCV.")
         cap = cv2.VideoCapture(camera_index)
         if not cap.isOpened():
             raise RuntimeError("No camera found. Check connection and camera_index in config.json.")
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-        # Warm up: some cameras return empty frames for the first reads.
         for _ in range(5):
             ok, _frame = cap.read()
             if ok:
@@ -66,7 +69,6 @@ def _init_camera(camera_index: int):
 def _capture_frame(cam, cam_type: str) -> np.ndarray:
     if cam_type == "picamera2":
         return cam.capture_array()
-    # Retry a few times — transient read failures are common over USB/CSI.
     for _ in range(3):
         ret, frame = cam.read()
         if ret and frame is not None:
@@ -85,9 +87,18 @@ def _save_image(img: np.ndarray, prefix: str = "capture") -> str:
 def main():
     cfg = cfg_module.load()
 
-    if not cfg.telegram_token or not cfg.partner_chat_id:
-        print("Config incomplete. Run: python setup.py")
-        return
+    # ── First-run notice ───────────────────────────────────────────────────────
+    if cfg.owner_chat_id == 0:
+        print("=" * 55)
+        print("  Blind Glasses — First Run")
+        print("  No owner registered yet.")
+        print("  Send /start to the bot from Telegram to claim ownership.")
+        print("  Token: hardcoded (no setup.py needed)")
+        print("=" * 55)
+    else:
+        print(f"[Boot] Owner: {cfg.owner_chat_id}")
+        print(f"[Boot] Language: {cfg.language}")
+        print(f"[Boot] Allowed users: {len(cfg.allowed_chat_ids)}")
 
     print("[Boot] Initializing modules...")
     db = FaceDatabase()
@@ -106,11 +117,10 @@ def main():
             return _capture_frame(cam, cam_type)
 
     agent = VisionAgent(
-        api_key=cfg.lightning_api_key,
-        api_base_url=cfg.api_base_url,
+        cfg=cfg,
         capture_fn=locked_capture,
         speak_fn=voice.speak,
-        relay_fn=bot.send_text,   # mirror the agent conversation to Telegram
+        relay_fn=bot.send_text,
     )
 
     print(f"[Boot] Camera: {cam_type}  |  Known faces: {len(db)}")
@@ -124,7 +134,6 @@ def main():
     def detection_loop() -> None:
         while True:
             try:
-                # Skip detection while agent is active (it's already using the camera)
                 if agent.is_active:
                     time.sleep(0.5)
                     continue
@@ -135,12 +144,16 @@ def main():
                     results = recognizer.detect_and_recognize(frame)
                     for name, _bbox, _crop, encoding in results:
                         if not name:
-                            continue   # unknown — ignore
+                            continue   # unknown — ignore in auto mode
                         elapsed = time.time() - cooldowns.get(name, 0)
                         if elapsed < cfg.cooldown_seconds:
                             continue
                         print(f"[Auto] Recognized: {name}")
-                        voice.speak(f"{name} is nearby")
+                        # Announce in the selected language
+                        if cfg.language == "ar":
+                            voice.speak(f"{name} بالقرب منك")
+                        else:
+                            voice.speak(f"{name} is nearby")
                         cooldowns[name] = time.time()
             except Exception as e:
                 print(f"[Auto] Error: {e}")
@@ -152,7 +165,7 @@ def main():
 
     def do_capture_and_send() -> None:
         if agent.is_active:
-            return   # don't interfere while agent is talking
+            return
         print("[Camera] Short press — capturing...")
         frame = locked_capture()
         results = recognizer.detect_and_recognize(frame)
@@ -161,16 +174,22 @@ def main():
             path = _save_image(crop, "capture")
             if name:
                 print(f"[Camera] Recognized: {name}")
-                voice.speak(f"{name} is in front of you")
+                voice.speak(
+                    f"{name} " + ("is in front of you" if cfg.language == "en" else "أمامك")
+                )
                 bot.send_capture(path, known_name=name)
             else:
                 print("[Camera] Unknown person")
-                voice.speak("Unknown person in front of you")
+                voice.speak(
+                    "Unknown person in front of you"
+                    if cfg.language == "en"
+                    else "شخص غير معروف أمامك"
+                )
                 bot.send_capture(path, encoding=encoding)
         else:
             path = _save_image(frame, "capture")
             print("[Camera] No face detected")
-            voice.speak("Image captured")
+            voice.speak("Image captured" if cfg.language == "en" else "تم التقاط الصورة")
             bot.send_capture(path)
 
     def do_toggle_agent() -> None:
@@ -182,10 +201,16 @@ def main():
         location = gps.get_location()
         if location:
             bot.send_gps_location(location)
-            voice.speak("Location sent")
+            voice.speak("Location sent" if cfg.language == "en" else "تم إرسال الموقع")
         else:
-            voice.speak("No GPS signal yet")
-            bot.send_text("📍 GPS button pressed — no satellite fix yet. Move outdoors and wait a minute.")
+            msg_en = "No GPS signal yet"
+            msg_ar = "لا توجد إشارة GPS بعد"
+            voice.speak(msg_en if cfg.language == "en" else msg_ar)
+            bot.send_text(
+                "📍 GPS button pressed — no satellite fix yet. Move outdoors and wait a moment."
+                if cfg.language == "en"
+                else "📍 تم الضغط على زر GPS — لا يوجد إشارة أقمار صناعية بعد. اخرج للخارج وانتظر لحظة."
+            )
 
     def do_gps_and_capture() -> None:
         print("[GPS] Long press — sending location and image...")
