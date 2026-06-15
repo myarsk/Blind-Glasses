@@ -5,8 +5,6 @@ from typing import List
 
 CONFIG_PATH = os.path.join(os.path.dirname(__file__), "config.json")
 
-# Token is hardcoded — never stored in config.json, never prompted.
-TELEGRAM_TOKEN = "8566219429:AAE2HYqkCV6vPOzWvjdZj-9oaVl9mgAI4-Y"
 
 
 @dataclass
@@ -33,9 +31,6 @@ class Config:
     # ── Face recognition ──────────────────────────────────────────────────────
     face_similarity_threshold: float = 0.4  # cosine similarity (0–1, higher = stricter)
 
-    # ── Vision AI ─────────────────────────────────────────────────────────────
-    lightning_api_key: str = "sk-lit-be40652e-72d3-4f4f-8bcb-f83dd3a08e37"
-    api_base_url: str = "http://abd.softup.agency:8418"
 
     # ── Helpers ───────────────────────────────────────────────────────────────
     def all_chat_ids(self) -> List[int]:

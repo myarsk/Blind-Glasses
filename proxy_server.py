@@ -14,7 +14,7 @@ import uvicorn
 from fastapi import FastAPI, Request, Response
 
 LIGHTNING_BASE = "https://lightning.ai/api/v1"
-API_KEY = os.getenv("LIGHTNING_API_KEY", "sk-lit-be40652e-72d3-4f4f-8bcb-f83dd3a08e37")
+API_KEY = os.getenv("LIGHTNING_API_KEY")
 
 app = FastAPI()
 
