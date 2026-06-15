@@ -1,6 +1,15 @@
 """
 First-run setup wizard.
 Run once on the Pi: python setup.py
+
+Hardware this covers:
+  - VL53L0X distance sensor  (I2C: SDA→GPIO2, SCL→GPIO3)
+  - Camera switch             (GPIO17)
+  - GPS switch                (GPIO27)
+  - NEO-6M GPS                (UART: /dev/ttyAMA0)
+  - Telegram bot
+  - Lightning.ai / proxy API
+  - pyttsx3 voice output
 """
 
 import asyncio
@@ -27,7 +36,7 @@ def _ask_int(prompt: str, default: int) -> int:
         try:
             return int(raw)
         except ValueError:
-            print("  Enter a number.")
+            print("  Enter a whole number.")
 
 
 def _ask_float(prompt: str, default: float) -> float:
@@ -41,45 +50,79 @@ def _ask_float(prompt: str, default: float) -> float:
             print("  Enter a number.")
 
 
-# ── Step 1: ADC / distance sensor ─────────────────────────────────────────────
+# ── Step 1: VL53L0X distance sensor ───────────────────────────────────────────
 def setup_sensor(cfg: Config) -> None:
-    print("\n=== Distance Sensor (SHARP GP2Y0A41SK0F) ===")
-    print("ADC types: 1) MCP3008 (SPI)  2) ADS1115 (I2C)")
-    choice = _ask("Choose ADC type [1/2]", "1")
-    cfg.adc_type = "mcp3008" if choice != "2" else "ads1115"
-    cfg.adc_channel = _ask_int("ADC channel (0–7 for MCP3008, 0–3 for ADS1115)", 0)
-    print(f"  → Using {cfg.adc_type.upper()}, channel {cfg.adc_channel}")
+    print("\n=== Distance Sensor (VL53L0X) ===")
+    print("Wiring: VCC=3.3V  GND  SDA→GPIO2  SCL→GPIO3")
 
     cfg.detection_distance_cm = _ask_float(
-        "Detection distance threshold in cm (SHARP range: 4–30)", 30.0
+        "Detection distance threshold in cm (VL53L0X range: 3–200)", 60.0
     )
 
-    # Live test
-    print("\nTesting sensor — reading 5 values (press Ctrl+C to skip):")
+    print("\nTesting sensor — reading 5 values (Ctrl+C to skip):")
     try:
         from distance_sensor import DistanceSensor
-        sensor = DistanceSensor(cfg)
+        sensor = DistanceSensor()
         for _ in range(5):
             cm = sensor.read_cm()
-            print(f"  Distance: {cm:.1f} cm")
+            label = f"{cm:.1f} cm" if cm != float("inf") else "out of range"
+            print(f"  Distance: {label}")
             time.sleep(0.5)
+        print("  Sensor OK.")
     except KeyboardInterrupt:
         print("  Skipped.")
     except Exception as e:
         print(f"  Sensor test failed: {e}")
-        print("  Check wiring and ADC type, then re-run setup.")
+        print("  Check wiring (SDA→GPIO2, SCL→GPIO3) and run: pip install adafruit-circuitpython-vl53l0x")
 
 
-# ── Step 2: GPS ────────────────────────────────────────────────────────────────
+# ── Step 2: GPIO switches ──────────────────────────────────────────────────────
+def setup_switches(cfg: Config) -> None:
+    print("\n=== GPIO Switches ===")
+    print("Wiring: each switch → one leg to GND, other leg to GPIO pin")
+
+    cfg.switch_camera_pin = _ask_int("Camera switch GPIO pin (BCM)", cfg.switch_camera_pin)
+    cfg.switch_gps_pin    = _ask_int("GPS switch GPIO pin (BCM)",    cfg.switch_gps_pin)
+    cfg.long_press_seconds = _ask_float("Long press threshold (seconds)", cfg.long_press_seconds)
+
+    print("\nTesting switches — press each button once (Ctrl+C to skip):")
+    try:
+        import RPi.GPIO as GPIO
+        GPIO.setmode(GPIO.BCM)
+        GPIO.setup(cfg.switch_camera_pin, GPIO.IN, pull_up_down=GPIO.PUD_UP)
+        GPIO.setup(cfg.switch_gps_pin,    GPIO.IN, pull_up_down=GPIO.PUD_UP)
+
+        for label, pin in [("camera", cfg.switch_camera_pin), ("GPS", cfg.switch_gps_pin)]:
+            print(f"  Press the {label} switch (GPIO{pin})...", end=" ", flush=True)
+            deadline = time.time() + 10
+            while time.time() < deadline:
+                if GPIO.input(pin) == GPIO.LOW:
+                    print("detected!")
+                    time.sleep(0.3)
+                    break
+                time.sleep(0.05)
+            else:
+                print("timeout — skipping.")
+        GPIO.cleanup()
+    except KeyboardInterrupt:
+        print("\n  Skipped.")
+    except ImportError:
+        print("  RPi.GPIO not available on this machine — skipping switch test.")
+    except Exception as e:
+        print(f"  Switch test failed: {e}")
+
+
+# ── Step 3: GPS ────────────────────────────────────────────────────────────────
 def setup_gps(cfg: Config) -> None:
     print("\n=== GPS (NEO-6M) ===")
-    cfg.gps_serial_port = _ask("Serial port", "/dev/ttyAMA0")
-    cfg.gps_baud = _ask_int("Baud rate", 9600)
+    print("Wiring: VCC=3.3V  GND  TX→GPIO15(RX)  RX→GPIO14(TX)")
+    cfg.gps_serial_port = _ask("Serial port", cfg.gps_serial_port)
+    cfg.gps_baud = _ask_int("Baud rate", cfg.gps_baud)
+
     print("Testing GPS (waiting up to 15s for a fix — Ctrl+C to skip):")
     try:
         import serial
         import pynmea2
-
         with serial.Serial(cfg.gps_serial_port, cfg.gps_baud, timeout=1) as ser:
             start = time.time()
             while time.time() - start < 15:
@@ -87,23 +130,23 @@ def setup_gps(cfg: Config) -> None:
                 try:
                     msg = pynmea2.parse(line)
                     if hasattr(msg, "latitude") and msg.latitude:
-                        print(f"  GPS fix: lat={msg.latitude:.5f} lon={msg.longitude:.5f}")
+                        print(f"  GPS fix: lat={msg.latitude:.5f}  lon={msg.longitude:.5f}")
                         break
                 except pynmea2.ParseError:
                     pass
             else:
-                print("  No fix yet (normal outdoors, may take a few minutes on first use).")
+                print("  No fix yet — normal outdoors, may take a few minutes on first use.")
     except KeyboardInterrupt:
         print("  Skipped.")
     except Exception as e:
         print(f"  GPS test failed: {e}")
 
 
-# ── Step 3: Telegram ───────────────────────────────────────────────────────────
+# ── Step 4: Telegram ───────────────────────────────────────────────────────────
 def setup_telegram(cfg: Config) -> None:
     print("\n=== Telegram Bot ===")
     print("Create a bot at @BotFather if you haven't already.")
-    cfg.telegram_token = _ask("Telegram bot token")
+    cfg.telegram_token = _ask("Telegram bot token", cfg.telegram_token)
 
     print("\nHave your partner open Telegram and send /start to your bot.")
     print("Waiting for your partner to message the bot (Ctrl+C to skip auto-detect)...")
@@ -111,7 +154,7 @@ def setup_telegram(cfg: Config) -> None:
         asyncio.run(_wait_for_start(cfg))
     except KeyboardInterrupt:
         print("  Skipped auto-detect.")
-        cfg.partner_chat_id = _ask_int("Enter partner's chat_id manually", 0)
+        cfg.partner_chat_id = _ask_int("Enter partner's chat_id manually", cfg.partner_chat_id)
 
 
 async def _wait_for_start(cfg: Config) -> None:
@@ -123,7 +166,7 @@ async def _wait_for_start(cfg: Config) -> None:
     async def on_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         cfg.partner_chat_id = update.effective_chat.id
         await update.message.reply_text(
-            "Connected! You'll receive alerts here when an unknown person is detected."
+            "Connected! You will receive image captures and GPS alerts from the blind glasses here."
         )
         print(f"\n  Partner chat_id captured: {cfg.partner_chat_id}")
         found_event.set()
@@ -139,27 +182,58 @@ async def _wait_for_start(cfg: Config) -> None:
     await app.shutdown()
 
 
-# ── Step 4: Voice ──────────────────────────────────────────────────────────────
+# ── Step 5: Voice ──────────────────────────────────────────────────────────────
 def setup_voice() -> None:
     print("\n=== Voice Output ===")
-    print("Testing TTS...")
+    print("Testing TTS (requires espeak-ng: sudo apt install espeak-ng)...")
     try:
         import pyttsx3
         engine = pyttsx3.init()
-        engine.say("Setup complete. Blind glasses system is ready.")
+        engine.setProperty("rate", 150)
+        engine.say("Blind glasses setup complete. System is ready.")
         engine.runAndWait()
         print("  Voice OK.")
     except Exception as e:
-        print(f"  TTS test failed: {e}. Install espeak: sudo apt install espeak")
+        print(f"  TTS test failed: {e}")
 
 
-# ── Step 5: Telegram test message ─────────────────────────────────────────────
+# ── Step 6: API connectivity ───────────────────────────────────────────────────
+def setup_api(cfg: Config) -> None:
+    print("\n=== Vision AI API ===")
+    print(f"Current endpoint: {cfg.api_base_url}")
+    new_url = _ask("API base URL (Enter to keep)", cfg.api_base_url)
+    cfg.api_base_url = new_url
+
+    print("Testing API connection (sending a short text request)...")
+    try:
+        from openai import OpenAI
+        client = OpenAI(
+            base_url=cfg.api_base_url.rstrip("/") + "/",
+            api_key=cfg.lightning_api_key,
+        )
+        resp = client.chat.completions.create(
+            model="google/gemini-2.5-flash-lite-preview-06-17",
+            messages=[{"role": "user", "content": [{"type": "text", "text": "Reply with just the word OK."}]}],
+        )
+        print(f"  API OK: {resp.choices[0].message.content.strip()}")
+    except KeyboardInterrupt:
+        print("  Skipped.")
+    except Exception as e:
+        print(f"  API test failed: {e}")
+        print("  Check your proxy is running or use the direct Lightning.ai URL.")
+
+
+# ── Step 7: Final Telegram test ────────────────────────────────────────────────
 async def _send_test_message(cfg: Config) -> None:
     from telegram import Bot
     bot = Bot(token=cfg.telegram_token)
     await bot.send_message(
         chat_id=cfg.partner_chat_id,
-        text="Blind Glasses setup complete. Alerts will appear here."
+        text=(
+            "Blind Glasses setup complete.\n"
+            "You will receive image captures here when the camera button is pressed, "
+            "and GPS location when the GPS button is pressed."
+        ),
     )
     print("  Test message sent.")
 
@@ -181,15 +255,18 @@ def main():
     cfg = cfg_module.load()
 
     setup_sensor(cfg)
+    setup_switches(cfg)
     setup_gps(cfg)
     setup_telegram(cfg)
     setup_voice()
+    setup_api(cfg)
+
+    cfg_module.save(cfg)
+    print("\n✓ Configuration saved to config.json")
 
     if cfg.partner_chat_id:
         setup_telegram_test(cfg)
 
-    cfg_module.save(cfg)
-    print("\n✓ Configuration saved to config.json")
     print("✓ Run 'python main.py' to start the system.")
     print("✓ To start on boot: sudo systemctl enable glasses")
 

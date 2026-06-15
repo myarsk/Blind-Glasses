@@ -22,7 +22,7 @@ pyserial
 pyttsx3
 
 # ── Telegram ──────────────────────────────────────────────────────────────────
-python-telegram-bot==20.*
+python-telegram-bot>=21.0
 
 # ── Vision agent ──────────────────────────────────────────────────────────────
 openai
