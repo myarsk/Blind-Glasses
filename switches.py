@@ -9,6 +9,9 @@ Camera switch: short press → on_camera
                long press  → on_camera_long   (agent mode toggle)
 GPS switch:    short press → on_gps_short
                long press  → on_gps_long
+
+Uses polling rather than add_event_detect because GPIO.BOTH edge detection
+is broken on newer Raspberry Pi OS kernels with RPi.GPIO.
 """
 
 import threading
@@ -20,6 +23,9 @@ try:
     _GPIO_AVAILABLE = True
 except ImportError:
     _GPIO_AVAILABLE = False
+
+_POLL_HZ = 50          # 50 samples/second → 20 ms resolution
+_DEBOUNCE_S = 0.02     # ignore transitions shorter than 20 ms
 
 
 class SwitchHandler:
@@ -38,68 +44,83 @@ class SwitchHandler:
         self._on_camera_long = on_camera_long
         self._on_gps_short = on_gps_short
         self._on_gps_long = on_gps_long
-        self._camera_press_time: float | None = None
-        self._gps_press_time: float | None = None
         self._camera_pin = camera_pin
         self._gps_pin = gps_pin
+        self._running = False
 
         if not _GPIO_AVAILABLE:
             print("[Switches] RPi.GPIO not available — buttons disabled.")
             return
 
         GPIO.setwarnings(False)
-        GPIO.cleanup()          # reset any stale state from a previous crashed run
+        GPIO.cleanup()
         GPIO.setmode(GPIO.BCM)
         GPIO.setup(camera_pin, GPIO.IN, pull_up_down=GPIO.PUD_UP)
-        GPIO.setup(gps_pin, GPIO.IN, pull_up_down=GPIO.PUD_UP)
+        GPIO.setup(gps_pin,    GPIO.IN, pull_up_down=GPIO.PUD_UP)
 
-        # Both pins use BOTH edges to measure press duration.
-        # Remove any lingering event detector before adding a new one.
-        for pin, cb in [
-            (camera_pin, self._on_camera_edge),
-            (gps_pin,    self._on_gps_edge),
-        ]:
-            try:
-                GPIO.remove_event_detect(pin)
-            except RuntimeError:
-                pass
-            GPIO.add_event_detect(pin, GPIO.BOTH, callback=cb, bouncetime=50)
+        self._running = True
+        t = threading.Thread(target=self._poll_loop, daemon=True)
+        t.start()
         print(f"[Switches] Ready — camera GPIO{camera_pin}, GPS GPIO{gps_pin}")
 
     def _fire(self, fn: Optional[Callable]) -> None:
         if fn:
             threading.Thread(target=fn, daemon=True).start()
 
-    def _on_camera_edge(self, channel: int) -> None:
-        if not _GPIO_AVAILABLE:
-            return
-        if GPIO.input(channel) == GPIO.LOW:   # pressed
-            self._camera_press_time = time.time()
-        else:                                  # released
-            if self._camera_press_time is None:
-                return
-            duration = time.time() - self._camera_press_time
-            self._camera_press_time = None
-            if duration >= self._long_press_s:
-                self._fire(self._on_camera_long)
-            else:
-                self._fire(self._on_camera)
+    def _poll_loop(self) -> None:
+        """
+        Poll both pins at _POLL_HZ. Track HIGH→LOW (press) and LOW→HIGH
+        (release) transitions with a simple debounce. On release, decide
+        short vs long press by elapsed duration.
+        """
+        pins = [self._camera_pin, self._gps_pin]
+        # last confirmed state (HIGH = not pressed, LOW = pressed)
+        state       = {p: GPIO.HIGH for p in pins}
+        press_time  = {p: None       for p in pins}
+        # time of the last raw transition (for debounce)
+        raw_change  = {p: 0.0        for p in pins}
+        raw_state   = {p: GPIO.HIGH  for p in pins}
 
-    def _on_gps_edge(self, channel: int) -> None:
-        if not _GPIO_AVAILABLE:
-            return
-        if GPIO.input(channel) == GPIO.LOW:   # pressed
-            self._gps_press_time = time.time()
-        else:                                  # released
-            if self._gps_press_time is None:
-                return
-            duration = time.time() - self._gps_press_time
-            self._gps_press_time = None
-            if duration >= self._long_press_s:
-                self._fire(self._on_gps_long)
-            else:
-                self._fire(self._on_gps_short)
+        interval = 1.0 / _POLL_HZ
+
+        while self._running:
+            now = time.monotonic()
+            for pin in pins:
+                reading = GPIO.input(pin)
+
+                # Debounce: only accept stable readings
+                if reading != raw_state[pin]:
+                    raw_state[pin]  = reading
+                    raw_change[pin] = now
+                    continue
+
+                if now - raw_change[pin] < _DEBOUNCE_S:
+                    continue   # still within debounce window
+
+                if reading == state[pin]:
+                    continue   # no confirmed transition
+
+                # Confirmed transition
+                state[pin] = reading
+                if reading == GPIO.LOW:          # pressed
+                    press_time[pin] = now
+                else:                            # released
+                    if press_time[pin] is None:
+                        continue
+                    duration = now - press_time[pin]
+                    press_time[pin] = None
+                    self._dispatch(pin, duration)
+
+            time.sleep(interval)
+
+    def _dispatch(self, pin: int, duration: float) -> None:
+        long = duration >= self._long_press_s
+        if pin == self._camera_pin:
+            self._fire(self._on_camera_long if long else self._on_camera)
+        else:
+            self._fire(self._on_gps_long if long else self._on_gps_short)
 
     def cleanup(self) -> None:
+        self._running = False
         if _GPIO_AVAILABLE:
             GPIO.cleanup()
