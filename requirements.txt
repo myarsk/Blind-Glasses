@@ -21,8 +21,8 @@ pynmea2
 pyserial
 
 # ── Voice output ──────────────────────────────────────────────────────────────
-# Requires system package: sudo apt install espeak-ng
-pyttsx3
+# Uses espeak-ng directly via subprocess — no Python package needed
+# System package required: sudo apt install espeak-ng
 
 # ── Telegram ──────────────────────────────────────────────────────────────────
 python-telegram-bot>=21.0

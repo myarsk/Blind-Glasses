@@ -1,6 +1,6 @@
 import queue
+import subprocess
 import threading
-import pyttsx3
 
 
 class VoiceOutput:
@@ -10,18 +10,19 @@ class VoiceOutput:
         self._thread.start()
 
     def _worker(self):
-        engine = pyttsx3.init()
-        engine.setProperty("rate", 150)
-        engine.setProperty("volume", 1.0)
         while True:
             text = self._q.get()
             try:
-                engine.say(text)
-                engine.runAndWait()
+                subprocess.run(
+                    ["espeak-ng", "-s", "150", "-v", "en", text],
+                    capture_output=True,
+                )
+            except FileNotFoundError:
+                print("[Voice] espeak-ng not found — run: sudo apt install espeak-ng")
             except Exception as e:
                 print(f"[Voice] TTS error: {e}")
             self._q.task_done()
 
     def speak(self, text: str) -> None:
-        """Enqueue text for announcement. Non-blocking."""
+        """Enqueue text for speech. Non-blocking."""
         self._q.put(text)
