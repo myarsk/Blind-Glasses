@@ -105,6 +105,15 @@ class TelegramBot:
         with open(photo_path, "rb") as f:
             await bot.send_photo(chat_id=chat_id, photo=f, caption=caption)
 
+    def send_text(self, text: str) -> None:
+        """Send a plain text message to the partner. Thread-safe."""
+        asyncio.run_coroutine_threadsafe(self._do_send_text(text), self._loop)
+
+    async def _do_send_text(self, text: str):
+        if self._app is None:
+            return   # bot not started yet
+        await self._app.bot.send_message(chat_id=self._cfg.partner_chat_id, text=text)
+
     def send_gps_location(self, location: Tuple[float, float]) -> None:
         """Send GPS coordinates to the partner. Thread-safe."""
         asyncio.run_coroutine_threadsafe(

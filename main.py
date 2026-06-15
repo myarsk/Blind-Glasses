@@ -110,6 +110,7 @@ def main():
         api_base_url=cfg.api_base_url,
         capture_fn=locked_capture,
         speak_fn=voice.speak,
+        relay_fn=bot.send_text,   # mirror the agent conversation to Telegram
     )
 
     print(f"[Boot] Camera: {cam_type}  |  Known faces: {len(db)}")
@@ -184,6 +185,7 @@ def main():
             voice.speak("Location sent")
         else:
             voice.speak("No GPS signal yet")
+            bot.send_text("📍 GPS button pressed — no satellite fix yet. Move outdoors and wait a minute.")
 
     def do_gps_and_capture() -> None:
         print("[GPS] Long press — sending location and image...")

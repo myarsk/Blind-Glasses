@@ -40,9 +40,11 @@ class VisionAgent:
         api_base_url: str,
         capture_fn: Callable[[], np.ndarray],
         speak_fn: Callable[[str], None],
+        relay_fn: Callable[[str], None] = None,
     ):
         self._speak = speak_fn
         self._capture = capture_fn
+        self._relay = relay_fn   # optional: mirror the conversation to Telegram
         self._active = False
         self._messages: list = []
 
@@ -71,7 +73,17 @@ class VisionAgent:
         if self._active:
             self._active = False
             self._speak("Agent mode off.")
+            self._relay_text("🛑 Agent mode off.")
             print("[Agent] Stopped")
+
+    def _relay_text(self, text: str) -> None:
+        """Mirror a line of the conversation to Telegram, if a relay is set."""
+        if self._relay is None:
+            return
+        try:
+            self._relay(text)
+        except Exception as e:
+            print(f"[Agent] Telegram relay failed: {e}")
 
     # ── Main loop ──────────────────────────────────────────────────────────────
 
@@ -79,6 +91,7 @@ class VisionAgent:
         import speech_recognition as sr
 
         self._speak("Agent mode on. I can see through your camera. Ask me anything.")
+        self._relay_text("🎤 Agent mode on — listening.")
 
         recognizer = sr.Recognizer()
 
@@ -92,6 +105,7 @@ class VisionAgent:
         except Exception as e:
             print(f"[Agent] Microphone unavailable: {e}")
             self._speak("No microphone available. Agent mode off.")
+            self._relay_text(f"⚠️ Agent could not start: microphone unavailable ({e})")
             self._active = False
             return
 
@@ -102,14 +116,17 @@ class VisionAgent:
 
                 text = recognizer.recognize_google(audio).strip()
                 print(f"[Agent] Heard: {text}")
+                self._relay_text(f"🗣️ {text}")
 
                 if text.lower() in _EXIT_WORDS:
                     self._active = False
                     self._speak("Agent mode off.")
+                    self._relay_text("🛑 Agent mode off.")
                     break
 
                 response = self._query(text)
                 print(f"[Agent] Response: {response}")
+                self._relay_text(f"🤖 {response}")
                 self._speak(response)
 
             except sr.WaitTimeoutError:
@@ -119,6 +136,7 @@ class VisionAgent:
                 self._speak("I didn't catch that. Please repeat.")
             except Exception as e:
                 print(f"[Agent] Error: {e}")
+                self._relay_text(f"⚠️ Agent error: {e}")
                 self._speak("Something went wrong. Please try again.")
 
     # ── AI query ───────────────────────────────────────────────────────────────

@@ -2,6 +2,9 @@ import queue
 import subprocess
 import threading
 
+# Kill a stuck espeak-ng so a broken audio device can't jam the whole queue.
+_TTS_TIMEOUT_S = 45
+
 
 class VoiceOutput:
     def __init__(self, cfg=None):
@@ -16,9 +19,12 @@ class VoiceOutput:
                 subprocess.run(
                     ["espeak-ng", "-s", "150", "-v", "en", text],
                     capture_output=True,
+                    timeout=_TTS_TIMEOUT_S,
                 )
             except FileNotFoundError:
                 print("[Voice] espeak-ng not found — run: sudo apt install espeak-ng")
+            except subprocess.TimeoutExpired:
+                print("[Voice] espeak-ng timed out — check the audio output device.")
             except Exception as e:
                 print(f"[Voice] TTS error: {e}")
             self._q.task_done()
