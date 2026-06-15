@@ -81,11 +81,19 @@ class VisionAgent:
         self._speak("Agent mode on. I can see through your camera. Ask me anything.")
 
         recognizer = sr.Recognizer()
-        mic = sr.Microphone()
 
-        # Calibrate once for ambient noise
-        with mic as source:
-            recognizer.adjust_for_ambient_noise(source, duration=0.5)
+        # Mic setup can fail if no input device is available (no mic plugged in,
+        # or running under sudo without access to the user's audio session).
+        # Fail cleanly instead of crashing the thread with _active stuck True.
+        try:
+            mic = sr.Microphone()
+            with mic as source:
+                recognizer.adjust_for_ambient_noise(source, duration=0.5)
+        except Exception as e:
+            print(f"[Agent] Microphone unavailable: {e}")
+            self._speak("No microphone available. Agent mode off.")
+            self._active = False
+            return
 
         while self._active:
             try:

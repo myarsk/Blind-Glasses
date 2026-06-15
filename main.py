@@ -44,22 +44,35 @@ def _init_camera(camera_index: int):
         cam.start()
         time.sleep(0.5)
         return cam, "picamera2"
-    except Exception:
+    except Exception as e:
+        # Surface why picamera2 was unavailable — on a Pi this is usually a venv
+        # created without --system-site-packages, so libcamera isn't importable.
+        # OpenCV can open a CSI camera device but often can't read frames from it.
+        print(f"[Camera] picamera2 unavailable ({e}) — falling back to OpenCV.")
         cap = cv2.VideoCapture(camera_index)
         if not cap.isOpened():
             raise RuntimeError("No camera found. Check connection and camera_index in config.json.")
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+        # Warm up: some cameras return empty frames for the first reads.
+        for _ in range(5):
+            ok, _frame = cap.read()
+            if ok:
+                break
+            time.sleep(0.1)
         return cap, "opencv"
 
 
 def _capture_frame(cam, cam_type: str) -> np.ndarray:
     if cam_type == "picamera2":
         return cam.capture_array()
-    ret, frame = cam.read()
-    if not ret:
-        raise RuntimeError("Failed to read frame from camera.")
-    return frame
+    # Retry a few times — transient read failures are common over USB/CSI.
+    for _ in range(3):
+        ret, frame = cam.read()
+        if ret and frame is not None:
+            return frame
+        time.sleep(0.05)
+    raise RuntimeError("Failed to read frame from camera.")
 
 
 def _save_image(img: np.ndarray, prefix: str = "capture") -> str:

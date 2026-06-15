@@ -269,7 +269,7 @@ def main():
         setup_telegram_test(cfg)
 
     print("✓ Run 'python main.py' to start the system.")
-    print("✓ To start on boot: sudo systemctl enable glasses")
+    print("✓ To start on boot + Telegram IP report: sudo ./install_service.sh")
 
 
 if __name__ == "__main__":
