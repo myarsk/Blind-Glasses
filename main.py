@@ -81,7 +81,7 @@ def main():
     sensor = DistanceSensor()
     gps = GPSTracker(cfg)
     voice = VoiceOutput(cfg)
-    bot = TelegramBot(cfg, db, voice, gps_fn=gps.get_location)
+    bot = TelegramBot(cfg, db, voice, recognizer=recognizer, gps_fn=gps.get_location)
     recognizer = FaceRecognizer(db, cfg)
     cam, cam_type = _init_camera(cfg.camera_index)
 

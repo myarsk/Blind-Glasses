@@ -32,10 +32,11 @@ from voice_output import VoiceOutput
 
 
 class TelegramBot:
-    def __init__(self, cfg: Config, db: FaceDatabase, voice: VoiceOutput, gps_fn=None):
+    def __init__(self, cfg: Config, db: FaceDatabase, voice: VoiceOutput, recognizer=None, gps_fn=None):
         self._cfg = cfg
         self._db = db
         self._voice = voice
+        self._recognizer = recognizer
         self._gps_fn = gps_fn  # callable -> Optional[(lat, lon)]
 
         # State for pending face registration
@@ -199,18 +200,20 @@ class TelegramBot:
         os.makedirs(os.path.dirname(tmp_path), exist_ok=True)
         await file.download_to_drive(tmp_path)
 
-        # Extract encoding
-        import face_recognition
         import cv2
         img = cv2.imread(tmp_path)
         if img is None:
             await update.message.reply_text("Could not read the image. Try again.")
             return
-        rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-        encs = face_recognition.face_encodings(rgb)
-        if not encs:
+
+        if self._recognizer is None:
+            await update.message.reply_text("Face recognizer unavailable.")
+            return
+
+        encoding = self._recognizer.get_encoding(img)
+        if encoding is None:
             await update.message.reply_text("No face found in that photo. Try a clearer one.")
             return
 
-        self._pending_add_encoding = encs[0]
+        self._pending_add_encoding = encoding
         await update.message.reply_text("Face captured! Now send me their name.")

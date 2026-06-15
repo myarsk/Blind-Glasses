@@ -14,7 +14,7 @@ class Config:
     camera_index: int = 0
     gps_serial_port: str = "/dev/ttyAMA0"
     gps_baud: int = 9600
-    face_recognition_tolerance: float = 0.5
+    face_similarity_threshold: float = 0.4  # cosine similarity (0–1, higher = stricter)
     switch_camera_pin: int = 17   # BCM GPIO pin for camera button
     switch_gps_pin: int = 27      # BCM GPIO pin for GPS button
     long_press_seconds: float = 1.0

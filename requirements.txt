@@ -1,6 +1,8 @@
 # ── Face recognition ──────────────────────────────────────────────────────────
-# Requires system packages: sudo apt install cmake build-essential
-face_recognition
+# InsightFace uses ONNX — no dlib, works on Python 3.13 + ARM
+# If pip install insightface fails, first run: pip install Cython
+insightface
+onnxruntime
 opencv-python-headless
 
 # ── Camera ────────────────────────────────────────────────────────────────────
