@@ -1,32 +1,46 @@
 """
 VL53L0X Time-of-Flight distance sensor via I2C.
 
-Uses the VL53L0X library by John Bryan which works with clone chips.
-The adafruit library rejects clones due to a strict model-ID register check.
+The adafruit library rejects clone chips (e.g. CJUL53L0XV2) because their
+model-ID registers differ from genuine ST chips. This wrapper patches only
+those two register reads during __init__ so the rest of the calibration
+sequence runs normally.
 
 Wiring: VCC=3.3V, GND, SDA→GPIO2, SCL→GPIO3
-Library: pip install smbus2 VL53L0X
 """
 
-import VL53L0X
+import board
+import busio
+import adafruit_vl53l0x
+
+# Registers the adafruit lib checks against fixed expected values
+_MODEL_ID_REG    = 0xC0   # adafruit expects 0xEE
+_REVISION_ID_REG = 0xC2   # adafruit expects 0x10
 
 
 class DistanceSensor:
     def __init__(self):
-        self._tof = VL53L0X.VL53L0X(i2c_bus=1, i2c_address=0x29)
-        self._tof.open()
-        self._tof.start_ranging(VL53L0X.Vl53l0xAccuracyMode.BETTER)
+        original_read = adafruit_vl53l0x.VL53L0X._read_u8
+
+        def _lenient_read(self_sensor, reg):
+            # Return the values adafruit expects for ID registers so clones pass
+            if reg == _MODEL_ID_REG:
+                return 0xEE
+            if reg == _REVISION_ID_REG:
+                return 0x10
+            return original_read(self_sensor, reg)
+
+        adafruit_vl53l0x.VL53L0X._read_u8 = _lenient_read
+        try:
+            i2c = busio.I2C(board.SCL, board.SDA)
+            self._sensor = adafruit_vl53l0x.VL53L0X(i2c)
+        finally:
+            # Always restore so normal reads work correctly after init
+            adafruit_vl53l0x.VL53L0X._read_u8 = original_read
 
     def read_cm(self) -> float:
         """Return distance in cm. Returns float('inf') if out of range."""
-        mm = self._tof.get_distance()
+        mm = self._sensor.range
         if mm <= 0 or mm >= 8190:
             return float("inf")
         return mm / 10.0
-
-    def __del__(self):
-        try:
-            self._tof.stop_ranging()
-            self._tof.close()
-        except Exception:
-            pass
