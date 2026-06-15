@@ -19,7 +19,25 @@ from database import FaceDatabase
 
 RecognitionResult = Tuple[Optional[str], tuple, np.ndarray, np.ndarray]
 
-_MODELS_DIR = os.path.expanduser("~/.insightface/models/buffalo_sc")
+_MODELS_ROOT = os.path.expanduser("~/.insightface/models")
+_MODELS_DIR  = os.path.join(_MODELS_ROOT, "buffalo_sc")
+_ONNX_FILES  = ("det_500m.onnx", "w600k_mbf.onnx")
+
+
+def _auto_relocate_flat_models() -> None:
+    """
+    If the user manually unzipped buffalo_sc.zip into the models root dir
+    (flat layout), move the ONNX files into the expected buffalo_sc/ subdir.
+    """
+    flat_files = [f for f in _ONNX_FILES if os.path.isfile(os.path.join(_MODELS_ROOT, f))]
+    if not flat_files:
+        return
+    print("[FaceRecognizer] Moving model files into buffalo_sc/ subdirectory...")
+    os.makedirs(_MODELS_DIR, exist_ok=True)
+    import shutil
+    for fname in flat_files:
+        shutil.move(os.path.join(_MODELS_ROOT, fname), os.path.join(_MODELS_DIR, fname))
+    print("[FaceRecognizer] Models relocated.")
 
 
 class FaceRecognizer:
@@ -30,6 +48,7 @@ class FaceRecognizer:
         self._try_init()
 
     def _try_init(self) -> None:
+        _auto_relocate_flat_models()
         if not os.path.isdir(_MODELS_DIR) or not os.listdir(_MODELS_DIR):
             print(
                 "[FaceRecognizer] Model not found — face recognition disabled.\n"

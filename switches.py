@@ -47,19 +47,23 @@ class SwitchHandler:
             print("[Switches] RPi.GPIO not available — buttons disabled.")
             return
 
+        GPIO.setwarnings(False)
+        GPIO.cleanup()          # reset any stale state from a previous crashed run
         GPIO.setmode(GPIO.BCM)
         GPIO.setup(camera_pin, GPIO.IN, pull_up_down=GPIO.PUD_UP)
         GPIO.setup(gps_pin, GPIO.IN, pull_up_down=GPIO.PUD_UP)
 
-        # Both pins use BOTH edges to measure press duration
-        GPIO.add_event_detect(
-            camera_pin, GPIO.BOTH,
-            callback=self._on_camera_edge, bouncetime=50,
-        )
-        GPIO.add_event_detect(
-            gps_pin, GPIO.BOTH,
-            callback=self._on_gps_edge, bouncetime=50,
-        )
+        # Both pins use BOTH edges to measure press duration.
+        # Remove any lingering event detector before adding a new one.
+        for pin, cb in [
+            (camera_pin, self._on_camera_edge),
+            (gps_pin,    self._on_gps_edge),
+        ]:
+            try:
+                GPIO.remove_event_detect(pin)
+            except RuntimeError:
+                pass
+            GPIO.add_event_detect(pin, GPIO.BOTH, callback=cb, bouncetime=50)
         print(f"[Switches] Ready — camera GPIO{camera_pin}, GPS GPIO{gps_pin}")
 
     def _fire(self, fn: Optional[Callable]) -> None:
