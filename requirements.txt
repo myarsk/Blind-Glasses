@@ -12,8 +12,9 @@ picamera2
 RPi.GPIO
 
 # ── Distance sensor (VL53L0X via I2C) ────────────────────────────────────────
-adafruit-blinka
-adafruit-circuitpython-vl53l0x
+# VL53L0X (John Bryan) works with clone chips; adafruit's library rejects them
+smbus2
+VL53L0X
 
 # ── GPS ───────────────────────────────────────────────────────────────────────
 pynmea2
