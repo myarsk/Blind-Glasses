@@ -1,0 +1,4 @@
+# Dependencies for proxy_server.py — install on your American server, NOT the Pi
+fastapi
+uvicorn[standard]
+httpx

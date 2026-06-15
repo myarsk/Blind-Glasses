@@ -1,14 +1,14 @@
 """
-Telegram bot for unknown-face alerts and face registration.
+Telegram bot for image capture alerts, GPS sharing, and face registration.
 
 Partner flow:
-  1. Unknown face detected → bot sends photo + location to partner
-  2. Partner replies with name → face saved to database
+  1. Blind user presses camera button → photo sent to partner
+  2. If unknown face: partner replies with name → saved to database
   Commands:
-    /list   — show all known names
+    /list          — show all known names
     /remove <name> — delete a person
-    /add    — manually register a new face (bot asks for photo then name)
-    /location — get current GPS location of the blind person
+    /add           — manually register a new face (bot asks for photo then name)
+    /location      — get current GPS location of the blind user
 """
 
 import asyncio
@@ -76,30 +76,45 @@ class TelegramBot:
 
     # ── Outbound ──────────────────────────────────────────────────────────────
 
-    def send_unknown_alert(self, photo_path: str, encoding: np.ndarray,
-                           location: Optional[Tuple[float, float]] = None) -> None:
-        """Called from main thread. Schedules coroutine on bot's event loop."""
-        self._pending_encoding = encoding
+    def send_capture(
+        self,
+        photo_path: str,
+        encoding: Optional[np.ndarray] = None,
+        known_name: Optional[str] = None,
+    ) -> None:
+        """Send a captured photo to the partner. Thread-safe."""
+        if encoding is not None:
+            self._pending_encoding = encoding
         asyncio.run_coroutine_threadsafe(
-            self._do_send_alert(photo_path, location), self._loop
+            self._do_send_capture(photo_path, known_name), self._loop
         )
 
-    async def _do_send_alert(self, photo_path: str,
-                             location: Optional[Tuple[float, float]]):
+    async def _do_send_capture(self, photo_path: str, known_name: Optional[str]):
         bot: Bot = self._app.bot
         chat_id = self._cfg.partner_chat_id
-        with open(photo_path, "rb") as f:
-            await bot.send_photo(
-                chat_id=chat_id,
-                photo=f,
-                caption=(
-                    "Unknown person detected nearby.\n"
-                    "Reply with their name to register them, or /skip to ignore."
-                ),
+        if known_name:
+            caption = f"{known_name} is in front of the blind user."
+        elif self._pending_encoding is not None:
+            caption = (
+                "Unknown person detected.\n"
+                "Reply with their name to register them, or /skip to ignore."
             )
-        if location:
-            lat, lon = location
-            await bot.send_location(chat_id=chat_id, latitude=lat, longitude=lon)
+        else:
+            caption = "Scene captured."
+        with open(photo_path, "rb") as f:
+            await bot.send_photo(chat_id=chat_id, photo=f, caption=caption)
+
+    def send_gps_location(self, location: Tuple[float, float]) -> None:
+        """Send GPS coordinates to the partner. Thread-safe."""
+        asyncio.run_coroutine_threadsafe(
+            self._do_send_gps(location), self._loop
+        )
+
+    async def _do_send_gps(self, location: Tuple[float, float]):
+        lat, lon = location
+        await self._app.bot.send_location(
+            chat_id=self._cfg.partner_chat_id, latitude=lat, longitude=lon
+        )
 
     # ── Commands ──────────────────────────────────────────────────────────────
 

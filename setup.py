@@ -115,8 +115,8 @@ def setup_telegram(cfg: Config) -> None:
 
 
 async def _wait_for_start(cfg: Config) -> None:
-    from telegram import Bot
-    from telegram.ext import Application, CommandHandler, ContextTypes, Update
+    from telegram import Bot, Update
+    from telegram.ext import Application, CommandHandler, ContextTypes
 
     found_event = asyncio.Event()
 

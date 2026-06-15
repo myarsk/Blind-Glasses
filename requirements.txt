@@ -1,10 +1,34 @@
+# ── Face recognition ──────────────────────────────────────────────────────────
+# Requires system packages: sudo apt install cmake build-essential
 face_recognition
 opencv-python-headless
-pyttsx3
-python-telegram-bot==20.*
+
+# ── Camera ────────────────────────────────────────────────────────────────────
 picamera2
+
+# ── GPIO / switches ───────────────────────────────────────────────────────────
+RPi.GPIO
+
+# ── Distance sensor (VL53L0X via I2C) ────────────────────────────────────────
+adafruit-blinka
+adafruit-circuitpython-vl53l0x
+
+# ── GPS ───────────────────────────────────────────────────────────────────────
 pynmea2
 pyserial
-spidev
-adafruit-circuitpython-ads1x15
+
+# ── Voice output ──────────────────────────────────────────────────────────────
+# Requires system package: sudo apt install espeak-ng
+pyttsx3
+
+# ── Telegram ──────────────────────────────────────────────────────────────────
+python-telegram-bot==20.*
+
+# ── Vision agent ──────────────────────────────────────────────────────────────
+openai
+# Requires system package: sudo apt install portaudio19-dev
+SpeechRecognition
+pyaudio
+
+# ── Shared ────────────────────────────────────────────────────────────────────
 numpy
